@@ -1,0 +1,594 @@
+library(data.table)
+require(arules)
+library(dplyr)
+library(tidyverse)
+
+bets=fread("bets.csv",stringsAsFactors = FALSE)
+booking=fread("booking.csv",stringsAsFactors = FALSE)
+goals=fread("goals.csv",stringsAsFactors = FALSE)
+matches=fread("matches.csv",stringsAsFactors = FALSE)
+stats=fread("stats.csv",stringsAsFactors = FALSE)
+
+#Selecting English Premier League data with league id of 148 and taking only played matches
+
+english_matches<-filter(matches, league_id == "148")
+complete_english_matches=english_matches[!is.na(english_matches$match_status), ]
+
+#hist(data) is used with [a,b) interval to plot the histograms
+#The home and away goals is found out to have Poisson distribution
+
+max(complete_english_matches$match_hometeam_score)
+max(complete_english_matches$match_awayteam_score)
+max(complete_english_matches$match_hometeam_score-complete_english_matches$match_awayteam_score)
+
+h_home<-hist(complete_english_matches$match_hometeam_score,right=F, breaks=8, xlim=c(0,8), xlab="Home Goals", ylab="Number of Games",main="Home Score(goals)", col="red")
+h_away<-hist(complete_english_matches$match_awayteam_score, right=F,  breaks=7, xlim=c(0,7), xlab="Away Goals", ylab="Number of Games",main="Away Score(goals)", col="blue")
+hist(complete_english_matches$match_hometeam_score-complete_english_matches$match_awayteam_score, right=F,  breaks=7, xlab="Home Goals-Away Goals", ylab="Number of Games",main="Home Score(goals)-Away Score(goals)", col="green")
+
+# Calculating 1st, 2nd and 3rd quantiles for both home and away goals with 2nd quantiles is the expected number of goals the distributions
+quantile(complete_english_matches$match_hometeam_score, c(0.25,0.5,0.75))
+quantile(complete_english_matches$match_awayteam_score, c(0.25,0.5,0.75))
+
+# Add a Normal Curve to the Poisson distribution for hometeam score
+home_score<- complete_english_matches$match_hometeam_score
+xfit<-seq(min(home_score),max(home_score),length(345)) 
+yfit<-dnorm(xfit,mean=mean(home_score),sd=sd(home_score)) 
+yfit <- yfit*diff(h_home$mids[1:2])*length(home_score) 
+lines(xfit, yfit, col="blue", lwd=2)
+
+# Add a Normal Curve to the Poisson distribution for awayteam score
+away_score<- complete_english_matches$match_awayteam_score
+xfit<-seq(min(away_score),max(away_score),length(345)) 
+yfit<-dnorm(xfit,mean=mean(away_score),sd=sd(away_score)) 
+yfit <- yfit*diff(h_away$mids[1:2])*length(away_score) 
+lines(xfit, yfit, col="red", lwd=2)
+
+#############################Task2####################################
+# Real match results
+complete_english_matches_final<-complete_english_matches %>%  select(match_id,match_hometeam_score, match_awayteam_score)
+complete_english_matches_final$english_match_results<-complete_english_matches_final$match_hometeam_score-complete_english_matches_final$match_awayteam_score
+
+#The bets are reduced for only English Premier League with filtering thourough match ids
+
+english_matches_ids <- complete_english_matches$match_id
+english_bets=bets[bets$match_id %in% english_matches_ids, ]
+
+head(english_bets)
+#Titanbet, ComeOn, Jetbull, NordicBet, 5Dimes are chosed bookmakers.. 
+
+# Bettings from Titanbet for home win, draw and away win
+########################################################
+home_win_titanbet=filter(english_bets, variable=="odd_1"& odd_bookmakers=="Titanbet")
+draw_titanbet=filter(english_bets, variable=="odd_x"& odd_bookmakers=="Titanbet")
+away_win_titanbet=filter(english_bets, variable=="odd_2"& odd_bookmakers=="Titanbet")
+
+p_home_titanbet=1/home_win_titanbet$value
+p_tie_titanbet=1/draw_titanbet$value
+p_away_titanbet=1/away_win_titanbet$value
+
+p_normalized_home_titanbet=(1/home_win_titanbet$value)/(1/home_win_titanbet$value+1/draw_titanbet$value+1/away_win_titanbet$value)
+p_normalized_draw_titanbet=(1/draw_titanbet$value)/(1/home_win_titanbet$value+1/draw_titanbet$value+1/away_win_titanbet$value)
+p_normalized_away_titanbet=(1/away_win_titanbet$value)/(1/home_win_titanbet$value+1/draw_titanbet$value+1/away_win_titanbet$value)
+
+home_minus_away=p_home_titanbet-p_away_titanbet
+
+titanbet_dt = data.table(home_minus_away, matchids = draw_titanbet$match_id, bins = discretize(home_minus_away, 
+                                                                                               breaks=10, right=TRUE, left=FALSE)
+)
+
+titanbet_dt  = merge(titanbet_dt, complete_english_matches_final, by.x = "matchids", by.y = "match_id")
+
+titanbet_dt= copy(titanbet_dt)[,is_draw := english_match_results == 0]
+
+summary(titanbet_dt$bins)
+bin_widths=summarise(group_by(titanbet_dt,bins,is_draw),count =n())
+
+p_real_draw = c(0)
+
+p_real_draw[1]<-bin_widths$count[2]/bin_widths$count[1]
+p_real_draw[2]<-bin_widths$count[4]/bin_widths$count[3]
+p_real_draw[3]<-bin_widths$count[6]/bin_widths$count[5]
+p_real_draw[4]<-bin_widths$count[8]/bin_widths$count[7]
+p_real_draw[5]<-bin_widths$count[10]/bin_widths$count[9]
+p_real_draw[6]<-bin_widths$count[12]/bin_widths$count[11]
+p_real_draw[7]<-bin_widths$count[14]/bin_widths$count[13]
+p_real_draw[8]<-bin_widths$count[16]/bin_widths$count[15]
+p_real_draw[9]<-bin_widths$count[18]/bin_widths$count[17]
+p_real_draw[10]<-bin_widths$count[20]/bin_widths$count[19]
+
+y = c((-0.853-0.408)/2, (-0.408-0.181)/2, (-0.181-0.0511)/2, (-0.0511+0.0552)/2, (0.0552+0.139)/2, (0.139+0.215)/2, 
+      (0.215+0.365)/2, (0.365+0.557)/2, (0.557+0.671)/2, (0.671+0.902)/2)
+
+plot(home_minus_away, p_tie_titanbet, col="red",xlim = c(-1,1))
+points(y, p_real_draw, col="black")
+
+# Bettings from ComeOn for home win, draw and away win
+######################################################
+home_win_comeon=filter(english_bets, variable=="odd_1"& odd_bookmakers=="ComeOn")
+draw_comeon=filter(english_bets, variable=="odd_x"& odd_bookmakers=="ComeOn")
+away_win_comeon=filter(english_bets, variable=="odd_2"& odd_bookmakers=="ComeOn")
+
+p_home_comeon=1/home_win_comeon$value
+p_tie_comeon=1/draw_comeon$value
+p_away_comeon=1/away_win_comeon$value
+
+p_normalized_home_comeon=1/home_win_comeon$value/(1/home_win_comeon$value+1/draw_comeon$value+1/away_win_comeon$value)
+p_normalized_draw_comeon=1/draw_comeon$value/(1/home_win_comeon$value+1/draw_comeon$value+1/away_win_comeon$value)
+p_normalized_away_comeon=1/away_win_comeon$value/(1/home_win_comeon$value+1/draw_comeon$value+1/away_win_comeon$value)
+
+
+home_minus_away=p_home_comeon-p_away_comeon
+
+comeon_dt = data.table(home_minus_away, matchids = draw_comeon$match_id, bins = discretize(home_minus_away, 
+                                                                                           breaks=10, right=TRUE, left=FALSE)
+)
+
+comeon_dt  = merge(comeon_dt, complete_english_matches_final, by.x = "matchids", by.y = "match_id")
+
+comeon_dt= copy(comeon_dt)[,is_draw := english_match_results == 0]
+
+summary(comeon_dt$bins)
+bin_widths=summarise(group_by(comeon_dt,bins,is_draw),count =n())
+
+p_real_draw = c(0)
+p_real_draw[1]<-bin_widths$count[2]/bin_widths$count[1]
+p_real_draw[2]<-bin_widths$count[4]/bin_widths$count[3]
+p_real_draw[3]<-bin_widths$count[6]/bin_widths$count[5]
+p_real_draw[4]<-bin_widths$count[8]/bin_widths$count[7]
+p_real_draw[5]<-bin_widths$count[10]/bin_widths$count[9]
+p_real_draw[6]<-bin_widths$count[12]/bin_widths$count[11]
+p_real_draw[7]<-bin_widths$count[14]/bin_widths$count[13]
+p_real_draw[8]<-bin_widths$count[16]/bin_widths$count[15]
+p_real_draw[9]<-bin_widths$count[18]/bin_widths$count[17]
+p_real_draw[10]<-bin_widths$count[20]/bin_widths$count[19]
+
+y = c((-0.853-0.408)/2, (-0.408-0.181)/2, (-0.181-0.0511)/2, (-0.0511+0.0552)/2, (0.0552+0.139)/2, (0.139+0.215)/2, 
+      (0.215+0.365)/2, (0.365+0.557)/2, (0.557+0.671)/2, (0.671+0.902)/2)
+
+plot(home_minus_away, p_tie_comeon, col="red",xlim = c(-1,1))
+points(y, p_real_draw, col="black")
+
+
+
+# Bettings from Jetbull for home win, draw and away win
+########################################################
+home_win_jetbull=filter(english_bets, variable=="odd_1"& odd_bookmakers=="Jetbull")
+draw_jetbull=filter(english_bets, variable=="odd_x"& odd_bookmakers=="Jetbull")
+away_win_jetbull=filter(english_bets, variable=="odd_2"& odd_bookmakers=="Jetbull")
+
+p_home_jetbull=1/home_win_jetbull$value
+p_tie_jetbull=1/draw_jetbull$value
+p_away_jetbull=1/away_win_jetbull$value
+
+p_normalized_home_jetbull=1/home_win_jetbull$value/(1/home_win_jetbull$value+1/draw_jetbull$value+1/away_win_jetbull$value)
+p_normalized_draw_jetbull=1/draw_jetbull$value/(1/home_win_jetbull$value+1/draw_jetbull$value+1/away_win_jetbull$value)
+p_normalized_away_jetbull=1/away_win_jetbull$value/(1/home_win_jetbull$value+1/draw_jetbull$value+1/away_win_jetbull$value)
+
+home_minus_away=p_home_jetbull-p_away_jetbull
+
+jetbull_dt = data.table(home_minus_away, matchids = draw_jetbull$match_id, bins = discretize(home_minus_away, 
+                                                                                             breaks=10, right=TRUE, left=FALSE)
+)
+
+jetbull_dt  = merge(jetbull_dt, complete_english_matches_final, by.x = "matchids", by.y = "match_id")
+
+jetbull_dt= copy(jetbull_dt)[,is_draw := english_match_results == 0]
+
+summary(jetbull_dt$bins)
+bin_widths_c=summarise(group_by(jetbull_dt,bins,is_draw),count =n())
+
+p_real_draw = c(0)
+p_real_draw[1]<-bin_widths$count[2]/bin_widths$count[1]
+p_real_draw[2]<-bin_widths$count[4]/bin_widths$count[3]
+p_real_draw[3]<-bin_widths$count[6]/bin_widths$count[5]
+p_real_draw[4]<-bin_widths$count[8]/bin_widths$count[7]
+p_real_draw[5]<-bin_widths$count[10]/bin_widths$count[9]
+p_real_draw[6]<-bin_widths$count[12]/bin_widths$count[11]
+p_real_draw[7]<-bin_widths$count[14]/bin_widths$count[13]
+p_real_draw[8]<-bin_widths$count[16]/bin_widths$count[15]
+p_real_draw[9]<-bin_widths$count[18]/bin_widths$count[17]
+p_real_draw[10]<-bin_widths$count[20]/bin_widths$count[19]
+
+y = c((-0.853-0.408)/2, (-0.408-0.181)/2, (-0.181-0.0511)/2, (-0.0511+0.0552)/2, (0.0552+0.139)/2, (0.139+0.215)/2, 
+      (0.215+0.365)/2, (0.365+0.557)/2, (0.557+0.671)/2, (0.671+0.902)/2)
+
+plot(home_minus_away, p_tie_jetbull, col="red",xlim = c(-1,1))
+points(y, p_real_draw, col="black")
+
+# Bettings from NordicBet for home win, draw and away win
+#########################################################
+home_win_nordicbet=filter(english_bets, variable=="odd_1"& odd_bookmakers=="NordicBet")
+draw_nordicbet=filter(english_bets, variable=="odd_x"& odd_bookmakers=="NordicBet")
+away_win_nordicbet=filter(english_bets, variable=="odd_2"& odd_bookmakers=="NordicBet")
+
+p_home_nordicbet=1/home_win_nordicbet$value
+p_tie_nordicbet=1/draw_nordicbet$value
+p_away_nordicbet=1/away_win_nordicbet$value
+
+p_normalized_home_nordicbet=1/home_win_nordicbet$value/(1/home_win_nordicbet$value+1/draw_nordicbet$value+1/away_win_nordicbet$value)
+p_normalized_draw_nordicbet=1/draw_nordicbet$value/(1/home_win_nordicbet$value+1/draw_nordicbet$value+1/away_win_nordicbet$value)
+p_normalized_away_nordicbet=1/away_win_nordicbet$value/(1/home_win_nordicbet$value+1/draw_nordicbet$value+1/away_win_nordicbet$value)
+
+home_minus_away=p_home_nordicbet-p_away_nordicbet
+
+nordicbet_dt = data.table(home_minus_away, matchids = draw_nordicbet$match_id, bins = discretize(home_minus_away, 
+                                                                                                 breaks=10, right=TRUE, left=FALSE)
+)
+
+nordicbet_dt  = merge(nordicbet_dt, complete_english_matches_final, by.x = "matchids", by.y = "match_id")
+nordicbet_dt= copy(nordicbet_dt)[,is_draw := english_match_results == 0]
+
+summary(nordicbet_dt$bins)
+bin_widths_c=summarise(group_by(nordicbet_dt,bins,is_draw),count =n())
+
+p_real_draw = c(0)
+p_real_draw[1]<-bin_widths$count[2]/bin_widths$count[1]
+p_real_draw[2]<-bin_widths$count[4]/bin_widths$count[3]
+p_real_draw[3]<-bin_widths$count[6]/bin_widths$count[5]
+p_real_draw[4]<-bin_widths$count[8]/bin_widths$count[7]
+p_real_draw[5]<-bin_widths$count[10]/bin_widths$count[9]
+p_real_draw[6]<-bin_widths$count[12]/bin_widths$count[11]
+p_real_draw[7]<-bin_widths$count[14]/bin_widths$count[13]
+p_real_draw[8]<-bin_widths$count[16]/bin_widths$count[15]
+p_real_draw[9]<-bin_widths$count[18]/bin_widths$count[17]
+p_real_draw[10]<-bin_widths$count[20]/bin_widths$count[19]
+
+y = c((-0.853-0.408)/2, (-0.408-0.181)/2, (-0.181-0.0511)/2, (-0.0511+0.0552)/2, (0.0552+0.139)/2, (0.139+0.215)/2, 
+      (0.215+0.365)/2, (0.365+0.557)/2, (0.557+0.671)/2, (0.671+0.902)/2)
+
+plot(home_minus_away, p_tie_nordicbet, col="red",xlim = c(-1,1))
+points(y, p_real_draw, col="black")
+
+
+# Bettings from 5Dimes for home win, draw and away win
+#######################################################
+home_win_5dimes=filter(english_bets, variable=="odd_1"& odd_bookmakers=="5Dimes")
+draw_5dimes=filter(english_bets, variable=="odd_x"& odd_bookmakers=="5Dimes")
+away_win_5dimes=filter(english_bets, variable=="odd_2"& odd_bookmakers=="5Dimes")
+
+p_home_5dimes=1/home_win_5dimes$value
+p_tie_5dimes=1/draw_5dimes$value
+p_away_5dimes=1/away_win_5dimes$value
+
+p_normalized_home_5dimes=1/home_win_5dimes$value/(1/home_win_5dimes$value+1/draw_5dimes$value+1/away_win_5dimes$value)
+p_normalized_draw_5dimes=1/draw_5dimes$value/(1/home_win_5dimes$value+1/draw_5dimes$value+1/away_win_5dimes$value)
+p_normalized_away_5dimes=1/away_win_5dimes$value/(1/home_win_5dimes$value+1/draw_5dimes$value+1/away_win_5dimes$value)
+
+home_minus_away=p_home_5dimes-p_away_5dimes
+
+dimes_dt = data.table(home_minus_away, matchids = draw_5dimes$match_id, bins = discretize(home_minus_away, 
+                                                                                          breaks=10, right=TRUE, left=FALSE)
+)
+
+dimes_dt  = merge(dimes_dt, complete_english_matches_final, by.x = "matchids", by.y = "match_id")
+
+dimes_dt= copy(dimes_dt)[,is_draw := english_match_results == 0]
+
+summary(dimes_dt$bins)
+bin_widths_c=summarise(group_by(dimes_dt,bins,is_draw),count =n())
+
+p_real_draw = c(0)
+p_real_draw[1]<-bin_widths$count[2]/bin_widths$count[1]
+p_real_draw[2]<-bin_widths$count[4]/bin_widths$count[3]
+p_real_draw[3]<-bin_widths$count[6]/bin_widths$count[5]
+p_real_draw[4]<-bin_widths$count[8]/bin_widths$count[7]
+p_real_draw[5]<-bin_widths$count[10]/bin_widths$count[9]
+p_real_draw[6]<-bin_widths$count[12]/bin_widths$count[11]
+p_real_draw[7]<-bin_widths$count[14]/bin_widths$count[13]
+p_real_draw[8]<-bin_widths$count[16]/bin_widths$count[15]
+p_real_draw[9]<-bin_widths$count[18]/bin_widths$count[17]
+p_real_draw[10]<-bin_widths$count[20]/bin_widths$count[19]
+
+y = c((-0.853-0.408)/2, (-0.408-0.181)/2, (-0.181-0.0511)/2, (-0.0511+0.0552)/2, (0.0552+0.139)/2, (0.139+0.215)/2, 
+      (0.215+0.365)/2, (0.365+0.557)/2, (0.557+0.671)/2, (0.671+0.902)/2)
+
+
+plot(home_minus_away, p_tie_5dimes, col="red",xlim = c(-1,1))
+points(y, p_real_draw, col="black")
+
+######task 3#####
+
+#Selecting English Premier League data with league id of 148 and taking only played matches and reducing bias
+
+matches_extra<-complete_english_matches[!is.na(english_matches$match_hometeam_extra_score), ]
+matches_noextra<-complete_english_matches[is.na(english_matches$match_hometeam_extra_score), ]
+matches_noextra<-matches_noextra %>%  select(match_id,match_hometeam_score, match_awayteam_score, match_hometeam_extra_score, match_awayteam_extra_score)
+matches_extra<-matches_extra %>%  select(match_id,match_hometeam_score, match_awayteam_score, match_hometeam_extra_score, match_awayteam_extra_score)
+
+matches_extra$match_result<-matches_extra$match_hometeam_score-matches_extra$match_awayteam_score
+matches_extra$extratime_result<-matches_extra$match_hometeam_extra_score-matches_extra$match_awayteam_extra_score
+matches_extra$normaltime_result<-matches_extra$match_result+matches_extra$extratime_result
+
+for (i in 1:length(matches_extra$match_result)){
+   if (matches_extra$match_result[i]>0){
+      matches_extra$match_result_status[i]<-c('home_win')
+   }
+   else if (matches_extra$match_result[i]==0){
+      matches_extra$match_result_status[i]<-c('draw')
+   } 
+   else {
+      matches_extra$match_result_status[i]<-c('away_win')
+   }
+}
+
+for (i in 1:length(matches_extra$match_result)){
+   if (matches_extra$normaltime_result[i]>0){
+      matches_extra$normaltime_result_status[i]<-c('home_win')
+   }
+   else if (matches_extra$normaltime_result[i]==0){
+      matches_extra$normaltime_result_status[i]<-c('draw')
+   } 
+   else {
+      matches_extra$normaltime_result_status[i]<-c('away_win')
+   }
+}
+
+for (i in 1:length(matches_extra$match_result)){
+   if (matches_extra$normaltime_result_status[i] ==  matches_extra$match_result_status[i]){
+      matches_extra$bias[i]<-c('No')
+   }
+   else {
+      matches_extra$bias[i]<-c('Yes')
+   }
+}
+
+matches_extra_reduced<-c(0)
+matches_extra_reduced=filter(matches_extra, bias=="No")
+matches_extra_reduced<-matches_extra_reduced%>%  select(match_id,match_hometeam_score, match_awayteam_score, match_hometeam_extra_score, match_awayteam_extra_score)
+
+final_matches_noextra<-rbind(matches_extra_reduced, matches_noextra)
+
+#43 matches are removed because there are goals in the extra time that changed the winning side
+
+match_ids<- final_matches_noextra$match_id
+#there are 760 bookings in premier league
+english_bookings=booking[booking$match_id %in% match_ids, ]
+#Only 22 of them are red cards
+english_booking_red<-filter(english_bookings, card=="red card")
+#the red cards in the first 15 min eliminated, there is only one match
+english_booking_red_first<-c(0,0,0,0,0)
+english_booking_red_first <- english_booking_red[!english_booking_red$time==4, ]
+
+# Real match results
+
+final_matches_noextra$match_result<-final_matches_noextra$match_hometeam_score-final_matches_noextra$match_awayteam_score
+
+#The bets are reduced for only English Premier League with filtering thourough match ids
+
+english_matches_ids <- final_matches_noextra$match_id
+english_bets=bets[bets$match_id %in% english_matches_ids, ]
+
+
+# Bettings from Titanbet for home win, draw and away win
+########################################################
+home_win_titanbet=filter(english_bets, variable=="odd_1"& odd_bookmakers=="Titanbet")
+draw_titanbet=filter(english_bets, variable=="odd_x"& odd_bookmakers=="Titanbet")
+away_win_titanbet=filter(english_bets, variable=="odd_2"& odd_bookmakers=="Titanbet")
+
+p_home_titanbet=1/home_win_titanbet$value
+p_tie_titanbet=1/draw_titanbet$value
+p_away_titanbet=1/away_win_titanbet$value
+
+p_normalized_home_titanbet=(1/home_win_titanbet$value)/(1/home_win_titanbet$value+1/draw_titanbet$value+1/away_win_titanbet$value)
+p_normalized_draw_titanbet=(1/draw_titanbet$value)/(1/home_win_titanbet$value+1/draw_titanbet$value+1/away_win_titanbet$value)
+p_normalized_away_titanbet=(1/away_win_titanbet$value)/(1/home_win_titanbet$value+1/draw_titanbet$value+1/away_win_titanbet$value)
+
+home_minus_away=p_home_titanbet-p_away_titanbet
+
+titanbet_dt = data.table(home_minus_away, matchids = draw_titanbet$match_id, bins = discretize(home_minus_away, 
+                                                                                               breaks=10, right=TRUE, left=FALSE)
+)
+
+titanbet_dt  = merge(titanbet_dt, complete_english_matches_final, by.x = "matchids", by.y = "match_id")
+
+titanbet_dt= copy(titanbet_dt)[,is_draw := english_match_results == 0]
+
+summary(titanbet_dt$bins)
+bin_widths=summarise(group_by(titanbet_dt,bins,is_draw),count =n())
+
+p_real_draw = c(0)
+
+p_real_draw[1]<-bin_widths$count[2]/bin_widths$count[1]
+p_real_draw[2]<-bin_widths$count[4]/bin_widths$count[3]
+p_real_draw[3]<-bin_widths$count[6]/bin_widths$count[5]
+p_real_draw[4]<-bin_widths$count[8]/bin_widths$count[7]
+p_real_draw[5]<-bin_widths$count[10]/bin_widths$count[9]
+p_real_draw[6]<-bin_widths$count[12]/bin_widths$count[11]
+p_real_draw[7]<-bin_widths$count[14]/bin_widths$count[13]
+p_real_draw[8]<-bin_widths$count[16]/bin_widths$count[15]
+p_real_draw[9]<-bin_widths$count[18]/bin_widths$count[17]
+p_real_draw[10]<-bin_widths$count[20]/bin_widths$count[19]
+
+y = c((-0.853-0.408)/2, (-0.408-0.181)/2, (-0.181-0.0511)/2, (-0.0511+0.0552)/2, (0.0552+0.139)/2, (0.139+0.215)/2, 
+      (0.215+0.365)/2, (0.365+0.557)/2, (0.557+0.671)/2, (0.671+0.902)/2)
+
+plot(home_minus_away, p_tie_titanbet, col="red",xlim = c(-1,1))
+points(y, p_real_draw, col="black")
+
+# Bettings from ComeOn for home win, draw and away win
+######################################################
+home_win_comeon=filter(english_bets, variable=="odd_1"& odd_bookmakers=="ComeOn")
+draw_comeon=filter(english_bets, variable=="odd_x"& odd_bookmakers=="ComeOn")
+away_win_comeon=filter(english_bets, variable=="odd_2"& odd_bookmakers=="ComeOn")
+
+p_home_comeon=1/home_win_comeon$value
+p_tie_comeon=1/draw_comeon$value
+p_away_comeon=1/away_win_comeon$value
+
+p_normalized_home_comeon=1/home_win_comeon$value/(1/home_win_comeon$value+1/draw_comeon$value+1/away_win_comeon$value)
+p_normalized_draw_comeon=1/draw_comeon$value/(1/home_win_comeon$value+1/draw_comeon$value+1/away_win_comeon$value)
+p_normalized_away_comeon=1/away_win_comeon$value/(1/home_win_comeon$value+1/draw_comeon$value+1/away_win_comeon$value)
+
+
+home_minus_away=p_home_comeon-p_away_comeon
+
+comeon_dt = data.table(home_minus_away, matchids = draw_comeon$match_id, bins = discretize(home_minus_away, 
+                                                                                           breaks=10, right=TRUE, left=FALSE)
+)
+
+comeon_dt  = merge(comeon_dt, complete_english_matches_final, by.x = "matchids", by.y = "match_id")
+
+comeon_dt= copy(comeon_dt)[,is_draw := english_match_results == 0]
+
+summary(comeon_dt$bins)
+bin_widths_c=summarise(group_by(comeon_dt,bins,is_draw),count =n())
+
+p_real_draw = c(0)
+p_real_draw[1]<-bin_widths$count[2]/bin_widths$count[1]
+p_real_draw[2]<-bin_widths$count[4]/bin_widths$count[3]
+p_real_draw[3]<-bin_widths$count[6]/bin_widths$count[5]
+p_real_draw[4]<-bin_widths$count[8]/bin_widths$count[7]
+p_real_draw[5]<-bin_widths$count[10]/bin_widths$count[9]
+p_real_draw[6]<-bin_widths$count[12]/bin_widths$count[11]
+p_real_draw[7]<-bin_widths$count[14]/bin_widths$count[13]
+p_real_draw[8]<-bin_widths$count[16]/bin_widths$count[15]
+p_real_draw[9]<-bin_widths$count[18]/bin_widths$count[17]
+p_real_draw[10]<-bin_widths$count[20]/bin_widths$count[19]
+
+y = c((-0.853-0.408)/2, (-0.408-0.181)/2, (-0.181-0.0511)/2, (-0.0511+0.0552)/2, (0.0552+0.139)/2, (0.139+0.215)/2, 
+      (0.215+0.365)/2, (0.365+0.557)/2, (0.557+0.671)/2, (0.671+0.902)/2)
+
+plot(home_minus_away, p_tie_comeon, col="red",xlim = c(-1,1))
+points(y, p_real_draw, col="black")
+
+
+
+# Bettings from Jetbull for home win, draw and away win
+########################################################
+home_win_jetbull=filter(english_bets, variable=="odd_1"& odd_bookmakers=="Jetbull")
+draw_jetbull=filter(english_bets, variable=="odd_x"& odd_bookmakers=="Jetbull")
+away_win_jetbull=filter(english_bets, variable=="odd_2"& odd_bookmakers=="Jetbull")
+
+p_home_jetbull=1/home_win_jetbull$value
+p_tie_jetbull=1/draw_jetbull$value
+p_away_jetbull=1/away_win_jetbull$value
+
+p_normalized_home_jetbull=1/home_win_jetbull$value/(1/home_win_jetbull$value+1/draw_jetbull$value+1/away_win_jetbull$value)
+p_normalized_draw_jetbull=1/draw_jetbull$value/(1/home_win_jetbull$value+1/draw_jetbull$value+1/away_win_jetbull$value)
+p_normalized_away_jetbull=1/away_win_jetbull$value/(1/home_win_jetbull$value+1/draw_jetbull$value+1/away_win_jetbull$value)
+
+home_minus_away=p_home_jetbull-p_away_jetbull
+
+jetbull_dt = data.table(home_minus_away, matchids = draw_jetbull$match_id, bins = discretize(home_minus_away, 
+                                                                                             breaks=10, right=TRUE, left=FALSE)
+)
+
+jetbull_dt  = merge(jetbull_dt, complete_english_matches_final, by.x = "matchids", by.y = "match_id")
+
+jetbull_dt= copy(jetbull_dt)[,is_draw := english_match_results == 0]
+
+summary(jetbull_dt$bins)
+bin_widths_c=summarise(group_by(jetbull_dt,bins,is_draw),count =n())
+
+p_real_draw = c(0)
+p_real_draw[1]<-bin_widths$count[2]/bin_widths$count[1]
+p_real_draw[2]<-bin_widths$count[4]/bin_widths$count[3]
+p_real_draw[3]<-bin_widths$count[6]/bin_widths$count[5]
+p_real_draw[4]<-bin_widths$count[8]/bin_widths$count[7]
+p_real_draw[5]<-bin_widths$count[10]/bin_widths$count[9]
+p_real_draw[6]<-bin_widths$count[12]/bin_widths$count[11]
+p_real_draw[7]<-bin_widths$count[14]/bin_widths$count[13]
+p_real_draw[8]<-bin_widths$count[16]/bin_widths$count[15]
+p_real_draw[9]<-bin_widths$count[18]/bin_widths$count[17]
+p_real_draw[10]<-bin_widths$count[20]/bin_widths$count[19]
+
+y = c((-0.853-0.408)/2, (-0.408-0.181)/2, (-0.181-0.0511)/2, (-0.0511+0.0552)/2, (0.0552+0.139)/2, (0.139+0.215)/2, 
+      (0.215+0.365)/2, (0.365+0.557)/2, (0.557+0.671)/2, (0.671+0.902)/2)
+
+plot(home_minus_away, p_tie_jetbull, col="red",xlim = c(-1,1))
+points(y, p_real_draw, col="black")
+
+# Bettings from NordicBet for home win, draw and away win
+#########################################################
+home_win_nordicbet=filter(english_bets, variable=="odd_1"& odd_bookmakers=="NordicBet")
+draw_nordicbet=filter(english_bets, variable=="odd_x"& odd_bookmakers=="NordicBet")
+away_win_nordicbet=filter(english_bets, variable=="odd_2"& odd_bookmakers=="NordicBet")
+
+p_home_nordicbet=1/home_win_nordicbet$value
+p_tie_nordicbet=1/draw_nordicbet$value
+p_away_nordicbet=1/away_win_nordicbet$value
+
+p_normalized_home_nordicbet=1/home_win_nordicbet$value/(1/home_win_nordicbet$value+1/draw_nordicbet$value+1/away_win_nordicbet$value)
+p_normalized_draw_nordicbet=1/draw_nordicbet$value/(1/home_win_nordicbet$value+1/draw_nordicbet$value+1/away_win_nordicbet$value)
+p_normalized_away_nordicbet=1/away_win_nordicbet$value/(1/home_win_nordicbet$value+1/draw_nordicbet$value+1/away_win_nordicbet$value)
+
+home_minus_away=p_home_nordicbet-p_away_nordicbet
+
+nordicbet_dt = data.table(home_minus_away, matchids = draw_nordicbet$match_id, bins = discretize(home_minus_away, 
+                                                                                                 breaks=10, right=TRUE, left=FALSE)
+)
+
+nordicbet_dt  = merge(nordicbet_dt, complete_english_matches_final, by.x = "matchids", by.y = "match_id")
+nordicbet_dt= copy(nordicbet_dt)[,is_draw := english_match_results == 0]
+
+summary(nordicbet_dt$bins)
+bin_widths_c=summarise(group_by(nordicbet_dt,bins,is_draw),count =n())
+
+p_real_draw = c(0)
+p_real_draw[1]<-bin_widths$count[2]/bin_widths$count[1]
+p_real_draw[2]<-bin_widths$count[4]/bin_widths$count[3]
+p_real_draw[3]<-bin_widths$count[6]/bin_widths$count[5]
+p_real_draw[4]<-bin_widths$count[8]/bin_widths$count[7]
+p_real_draw[5]<-bin_widths$count[10]/bin_widths$count[9]
+p_real_draw[6]<-bin_widths$count[12]/bin_widths$count[11]
+p_real_draw[7]<-bin_widths$count[14]/bin_widths$count[13]
+p_real_draw[8]<-bin_widths$count[16]/bin_widths$count[15]
+p_real_draw[9]<-bin_widths$count[18]/bin_widths$count[17]
+p_real_draw[10]<-bin_widths$count[20]/bin_widths$count[19]
+
+y = c((-0.853-0.408)/2, (-0.408-0.181)/2, (-0.181-0.0511)/2, (-0.0511+0.0552)/2, (0.0552+0.139)/2, (0.139+0.215)/2, 
+      (0.215+0.365)/2, (0.365+0.557)/2, (0.557+0.671)/2, (0.671+0.902)/2)
+
+plot(home_minus_away, p_tie_nordicbet, col="red",xlim = c(-1,1))
+points(y, p_real_draw, col="black")
+
+
+# Bettings from 5Dimes for home win, draw and away win
+#######################################################
+home_win_5dimes=filter(english_bets, variable=="odd_1"& odd_bookmakers=="5Dimes")
+draw_5dimes=filter(english_bets, variable=="odd_x"& odd_bookmakers=="5Dimes")
+away_win_5dimes=filter(english_bets, variable=="odd_2"& odd_bookmakers=="5Dimes")
+
+p_home_5dimes=1/home_win_5dimes$value
+p_tie_5dimes=1/draw_5dimes$value
+p_away_5dimes=1/away_win_5dimes$value
+
+p_normalized_home_5dimes=1/home_win_5dimes$value/(1/home_win_5dimes$value+1/draw_5dimes$value+1/away_win_5dimes$value)
+p_normalized_draw_5dimes=1/draw_5dimes$value/(1/home_win_5dimes$value+1/draw_5dimes$value+1/away_win_5dimes$value)
+p_normalized_away_5dimes=1/away_win_5dimes$value/(1/home_win_5dimes$value+1/draw_5dimes$value+1/away_win_5dimes$value)
+
+home_minus_away=p_home_5dimes-p_away_5dimes
+
+dimes_dt = data.table(home_minus_away, matchids = draw_5dimes$match_id, bins = discretize(home_minus_away, 
+                                                                                          breaks=10, right=TRUE, left=FALSE)
+)
+
+dimes_dt  = merge(dimes_dt, complete_english_matches_final, by.x = "matchids", by.y = "match_id")
+
+dimes_dt= copy(dimes_dt)[,is_draw := english_match_results == 0]
+
+summary(dimes_dt$bins)
+bin_widths_c=summarise(group_by(dimes_dt,bins,is_draw),count =n())
+
+p_real_draw = c(0)
+p_real_draw[1]<-bin_widths$count[2]/bin_widths$count[1]
+p_real_draw[2]<-bin_widths$count[4]/bin_widths$count[3]
+p_real_draw[3]<-bin_widths$count[6]/bin_widths$count[5]
+p_real_draw[4]<-bin_widths$count[8]/bin_widths$count[7]
+p_real_draw[5]<-bin_widths$count[10]/bin_widths$count[9]
+p_real_draw[6]<-bin_widths$count[12]/bin_widths$count[11]
+p_real_draw[7]<-bin_widths$count[14]/bin_widths$count[13]
+p_real_draw[8]<-bin_widths$count[16]/bin_widths$count[15]
+p_real_draw[9]<-bin_widths$count[18]/bin_widths$count[17]
+p_real_draw[10]<-bin_widths$count[20]/bin_widths$count[19]
+
+y = c((-0.853-0.408)/2, (-0.408-0.181)/2, (-0.181-0.0511)/2, (-0.0511+0.0552)/2, (0.0552+0.139)/2, (0.139+0.215)/2, 
+      (0.215+0.365)/2, (0.365+0.557)/2, (0.557+0.671)/2, (0.671+0.902)/2)
+
+
+plot(home_minus_away, p_tie_5dimes, col="red",xlim = c(-1,1))
+points(y, p_real_draw, col="black")
+
+
+
+
