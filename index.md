@@ -2,7 +2,7 @@
 
 
 ##Homework 1. 
-[Link](AK_HW1.html) is about the betting on English premier leage results
+[Link](AK_HW1.html) is about the betting on English premier leage match results
 
 
 ##Homework 2. 
