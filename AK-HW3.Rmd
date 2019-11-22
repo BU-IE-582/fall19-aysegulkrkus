@@ -1,0 +1,255 @@
+---
+title: "Homework 3-Ayşegül Karakuş"
+output: html_document
+---
+
+## Homework 3
+
+In this homework, it is aimed to predict hourly electricity consumption values of Turkey using linear and penalized regression approaches. First, the dataset is downloaded from EPİAŞ @ https://seffaflik.epias.com.tr/transparency/. site. The time interval is chosen as [01.01.2016-16.11.2019]. 
+
+First, thing to do is to add the relevant libraries and to read the csv file.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+library(data.table)
+require(arules)
+library(glmnet)
+library(lubridate)
+library(ggplot2)
+library(penalized)
+library(ie2misc)
+library(dplyr) 
+library(tidyverse)
+
+#Reading the data between [01.01.2016-16.11.2019]
+all_data<-fread("RealTimeConsumption.csv", stringsAsFactors = FALSE, data.table = FALSE)
+all_data=all_data[!is.na(all_data$`Consumption (MWh)`), ]
+
+#Introducing the data format and adding the weekdays to the specific dates
+all_data$Date<-as.Date(all_data$Date, format = "%d.%m.%Y")
+all_data$Days<-weekdays(all_data$Date)
+str(all_data)
+```
+
+After uploading to the consumption values of relevant dates. The consumption values are shifted for 48 h(lag 48) and 168 h(lag 168) and these 2 columns are used as the naïve predictors. Then, the all data is divided into two subgroups:the training and the testing data. Training data is the dataset that is used in the regression model. On the other hand, the model is tested on the test data. The training and testing intervals are chosen as 07.01.2016-31.10.2019 and 1.11.2019-16.11.2019, respectively. 
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+
+#Introducing the data format and adding the weekdays to the specific dates
+all_data$Date<-as.Date(all_data$Date, format = "%d.%m.%Y")
+all_data$Days<-weekdays(all_data$Date)
+
+#usage of consumption values of 2 days before(lag 48) and 7 days before(lag 168) for regression
+all_data[["lag48"]] = c(rep(0.0, 48), all_data$`Consumption (MWh)`[1:(length(all_data$`Consumption (MWh)`)-48)])
+all_data[["lag168"]] = c(rep(0.0, 168), all_data$`Consumption (MWh)`[1:(length(all_data$`Consumption (MWh)`)-168)])
+
+#Dividing the data set into training and testing data by filtering through dates
+training_data<-filter(all_data, Date<="2019-10-31")
+testing_data<-filter(all_data, Date>"2019-10-31")
+#removing zeros for lag 48 and lag 168
+training_data<-filter(training_data, Date>"2016-01-07")
+head(testing_data)
+head(training_data)
+
+```
+
+
+#Task A
+In the first part, the consumption values are directly predicted as the value given by lag48 and lag168. This approach will show the validity of naïve predictors  
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#using directly the consumption values of lag 48 and lag 168 without any model
+testingmape_48<-mape(testing_data$lag48, testing_data$`Consumption (MWh)`)
+testingmape_168<-mape(testing_data$lag168, testing_data$`Consumption (MWh)`)
+testingmape_48
+testingmape_168
+```
+
+The results show that the MAPE value for lag48 is more than twice of lag168. The high error rate of the lag48 shows the effect of the daily activites on electricity consumption. For example, lag48 uses fridays values to predict the sundays consumption. However, sundays should not be compared with fridays due to work activities.
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+plot(testing_data$lag48,testing_data$`Consumption (MWh)`, main="Lag48", xlab = "Estimated Consumption(lag48)", ylab = "Real Consumption")
+plot(testing_data$lag168,testing_data$`Consumption (MWh)`, main="Lag168", xlab = "Estimated Consumption(lag168)", ylab = "Real Consumption")
+```
+
+In addition, the plots also shows how scattered the values in the lag48 prediction method, whereas more linear trend is obtained with lag168 showing less variation.
+
+#Task B
+The linear regressin model is built by taking lag48 and lag 168 as the features on the long format of the data. Hence, the model output is as follows;
+
+        consumption=beta(0)+beta(1)xlag48+beta(2)xlag168
+
+Where beta(0) is the intercept and beta(1) and beta(2) are the coefficients of the linear regression model. The summary of the linear regression is as follows:
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+train_data<-cbind(training_data$lag48, training_data$lag168)
+train_data<-data.frame(train_data)
+train_results<-training_data$`Consumption (MWh)`
+linear_regression=lm(train_results~., data=train_data)
+
+summary(linear_regression)
+```
+
+These results can be interpreted from the figures as well. 
+
+```{r, echo=FALSE}
+par(mfrow=c(2,2))
+plot(linear_regression)
+```
+
+After looking at the statistics of the linear regression, the performance of the logistic regression is tested with the testing data set. 
+```{r, echo=FALSE}
+
+testing_df<-data.frame(testing_data[,1:6])
+names(testing_df)[5] <- "X1"
+names(testing_df)[6] <- "X2"
+testing_df$Estimate <- predict(linear_regression,testing_df)
+mape_allhour<-mape(testing_df$Estimate,testing_df$Consumption..MWh.)
+mape_allhour
+
+```
+
+The MAPE result is found to be 3.92 for this case. This result is slighly higher than the MAPE obtained in task A with lag168. This can be explained by the regression model itself. Here, the same coefficients for each hour are used to estimate the consumption values. However, there is less electiricity consumption in the  night hours. This, may increase the MAPE value. 
+
+```{r, echo=FALSE}
+plot(testing_df$Estimate, testing_df$Consumption..MWh., main="Linear Regression", xlab = "Estimated Consumption", ylab = "Real Consumption")
+```
+
+#TASK C
+
+Due to the hourly seasonality explained in previous section, 24 different models are trained to take hour affect on the consumption amount into consideration. 
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#modelling each hour by performing 24 separate models
+date_train<-unique(training_data$Date)
+hour_days<-unique(training_data$Hour)
+linear_regression<-c()
+hourly_coeff<-c()
+hourly_mape<-c()
+
+for(i in 1:24){
+  trainhour_data<-filter(training_data, Hour==hour_days[i])
+  trainhour_data_x<-cbind(trainhour_data[,5], trainhour_data[,6])
+  trainhour_data_x<-data.frame(trainhour_data_x)
+  train_results<-trainhour_data[,3]
+  linear_regression<-lm(train_results~.,data=trainhour_data_x)
+  
+  hourly_coeff[[i]]<-as.matrix(linear_regression$coefficients)
+  
+  testinghour_data<-filter(testing_data, Hour==hour_days[i])
+  testing_df<-data.frame(testing_data[,1:6])
+  names(testing_df)[5] <- "X1"
+  names(testing_df)[6] <- "X2"
+  testing_df$Estimate <- predict(linear_regression,testing_df)
+  hourly_mape[i]<-mape(testing_df$Estimate,testing_df$Consumption..MWh.)
+  
+}
+
+hourly_coeff_df <- data.frame(matrix(unlist(hourly_coeff), nrow=length(hourly_coeff), byrow=T))
+hourly_mape<-data.frame(hourly_mape)
+hourly_mape
+```
+
+
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+plot(testing_df$Estimate,testing_df$Consumption..MWh., main="Prediction at 00:00", xlab = "Estimated", ylab = "Real")
+```
+
+
+#TASK D
+
+Here, the data table is transformed from long format to wide format to use the 24 h data for both lag48 and lag168 as the predictors. For example, to predict 18 September electricity consumption at 18:00, the all day electiricty consumption of 16 September and 11 September are used as the parameters, hence there are 48 features. However, these 48 h consumption values are highly correlated. Therefore, penalized regression, more specifically lasso regression is used in this part.
+
+First thing to do is to transforming both training and testing data into wide format to obtain Figure 2. 
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#To be sure that the training and the testing data are original
+
+training_data<-filter(all_data, Date<="2019-10-31")
+testing_data<-filter(all_data, Date>"2019-10-31")
+#removing zeros for lag 48 and lag 168
+training_data<-filter(training_data, Date>"2016-01-07")
+
+#Transforming to wide format for train data
+w<-dcast(training_data,Date~ Hour, value.var="lag48")
+w2<-dcast(training_data,Date~ Hour, value.var="lag168")
+wide_training_data<-cbind(w, w2[,2:25])
+names(wide_training_data)[-1] <-  paste0('x', 1:(ncol(wide_training_data)))
+
+#Transforming to wide format for test data
+w_test<-dcast(testing_data,Date~ Hour, value.var="lag48")
+w2_test<-dcast(testing_data,Date~ Hour, value.var="lag168")
+wide_testing_data<-cbind(w_test, w2_test[,2:25])
+names(wide_testing_data)[-1] <-  paste0('x', 1:(ncol(wide_testing_data)))
+
+
+```
+
+The features of the training data is the same for all the hours, because only the target consumption is changing according to the hourly production. Hence, after forming the tables in wide format, the target values and corresponding test data are chosed with the help of for loop. 
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+
+#####Creating hourly Lasso regression
+date_train<-unique(training_data$Date)
+hour_days<-unique(training_data$Hour)
+hourly_coeff_lasso<-c()
+hourly_mape_lasso<-c()
+bestlam<-c()
+
+for(i in 1:24){
+
+  wide_train_y<-filter(training_data, Hour == hour_days[i])
+  wide_test_y<-filter(testing_data, Hour == hour_days[i])
+  ###################################################
+  wide_train_y<-wide_train_y$`Consumption (MWh)`
+  figure_2<-cbind(wide_training_data,wide_train_y)
+  
+  train_data<-as.matrix(wide_training_data[,2:49])
+  train_results<-as.matrix(wide_train_y)
+  testing_m<-data.matrix(wide_testing_data[,1:49])
+  
+  ##########lasso regression
+  cv_output<-cv.glmnet(train_data, train_results, family = "gaussian", alpha = 1)
+  
+  bestlam[i]=cv_output$lambda.min
+  lasso_best<-glmnet(train_data, train_results, family = "gaussian", alpha = 1, lambda = bestlam)
+  wide_testing_data$Lasso_pred<-predict(lasso_best, newx =  as(testing_m[,2:49], "dgCMatrix"), type = "response")
+  
+  hourly_mape_lasso[i]<-mape(wide_testing_data$Lasso_pred[,1],wide_test_y$`Consumption (MWh)`)
+  
+}
+
+hourly_mape_lasso<-data.frame(hourly_mape_lasso)
+hourly_mape_lasso
+```
+
+
+#TASK E
+
+
+The results of lasso regression with the linear regression is compared in this section with box plot. Boxplots are a measure of how well distributed is the data in a data set. As can be seen from the figure, Lasso regression has smaller median but higher interqualtile range compared to linear regression. This shows that linear regression prodives lower variance whereas lasso regression prvides higher accuracy. 
+
+
+```{r}
+par(mfrow=c(1,2))
+boxplot(hourly_mape_lasso, col = "orange", main="Lasso")
+boxplot(hourly_mape, col = "blue", main="Linear Reg.")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
