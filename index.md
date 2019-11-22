@@ -4,6 +4,9 @@ You can use the [editor on GitHub](https://github.com/BU-IE-582/fall19-aysegulkr
 
 Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
 
+Here is my Homework 1. [Link](AK_HW1.html)
+Here is my Homework 1. [Link](AK_HW2.html)
+Here is my Homework 1. [Link](AK-HW3.html)
 ### Markdown
 
 Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
